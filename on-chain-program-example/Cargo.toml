@@ -1,0 +1,20 @@
+[package]
+name = "solana-zk-client-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = "1.40.0"
+borsh = {version = "1.5.1", features = ["derive"]}
+solana-sdk = "=2.0.5"
+solana-client = "=2.0.5"
+ark-bn254 = "0.4.0"
+ark-ff = "0.4.0"
+ark-groth16 = "0.4.0"
+ark-std = "0.4.0"
+ark-snark = "0.4.0"
+ark-relations = "0.4.0"
+ark-serialize = "0.4.2"
+light-poseidon = "0.2.0"
+base64 = "0.22.1"
+rand = "0.8.5"
