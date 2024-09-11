@@ -13,7 +13,7 @@ borsh = {version = "1.5.1", features = ["derive"]}
 ark-ff = "0.4.2"
 ark-bn254 = "0.4.0"
 ark-groth16 = "0.4.0"
-ark-serialize = "0.4.2"
+ark-serialize = {version = "0.4.2", features = ["std"]}
 
 [lib]
 crate-type = ["cdylib", "lib"]

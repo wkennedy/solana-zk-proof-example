@@ -16,6 +16,8 @@ use solana_program::alt_bn128::prelude::*;
 use solana_program::instruction::InstructionError::InvalidInstructionData;
 use solana_program::program_error::ProgramError;
 
+const VK: &[u8] = include_bytes!("/home/waggins/projects/solana-zk-proof-example/on-chain-program-example/vk.bin");
+
 #[derive(BorshSerialize, BorshDeserialize)]
 struct SerializableProof {
     a: [u8; 64],
@@ -46,23 +48,14 @@ pub fn process_instruction(
     let mut pairing_data = Vec::new(); // 64 + 128 + 64 + 3 * 32
 
     proof.serialize_uncompressed( pairing_data.clone()).expect("");
-    // let mut bytes = Vec::new();
-    // &proof.a.serialize_uncompressed(&mut bytes);
-    // &proof.b.serialize_uncompressed(&mut bytes);
-    // &proof.b[1].serialize_uncompressed(&mut bytes);
-    // &proof.c.serialize_uncompressed(&mut bytes);
-
-    // Add proof points
-    // pairing_data.extend_from_slice(&proof.a.serialize_uncompressed(&mut bytes));
-    // pairing_data.extend_from_slice(&proof.b);
-    // pairing_data.extend_from_slice(&proof.b[1]);
-    // pairing_data.extend_from_slice(&proof.c);
 
     let mut pis = Vec::new();
 
     for pi in &public_inputs {
         pis.extend_from_slice(pi.0.to_bytes_le().as_slice())
     }
+
+    msg!("{:?}", VK.len());
 
     // Verify the proof
     let result = verify_groth16_proof(pairing_data.as_slice(), &pis)?;
@@ -83,6 +76,7 @@ fn verify_groth16_proof(
 ) -> Result<bool, ProgramError> {
     // Prepare the inputs for the pairing check
     let mut pairing_inputs = Vec::new();
+    pairing_inputs.extend_from_slice(VK);
     pairing_inputs.extend_from_slice(proof);
     pairing_inputs.extend_from_slice(public_inputs);
 
@@ -108,6 +102,7 @@ fn deserialize_proof_package(serialized_data: &[u8]) -> Result<(Proof<Bn254>, Ve
     // msg!("{:?}", &proof_package);
 
     let proof1 = Proof::<Bn254>::deserialize_uncompressed_unchecked(&proof_package.proof[..]).expect("TODO: panic message");
+
     // Deserialize the Proof
     // let a = G1Affine::new(
     //     bytes_to_field(&proof_package.proof.a[0..32])?,
