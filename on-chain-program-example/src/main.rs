@@ -1,8 +1,5 @@
-use std::fs;
-use std::fs::File;
-use std::io::Write;
-use ark_bn254::{Bn254, Fq2, Fr, G1Affine};
-use ark_ff::{Field, One, PrimeField, Zero};
+use ark_bn254::{Bn254, Fq2, Fr, G1Affine, G1Projective};
+use ark_ff::{PrimeField, Zero};
 use ark_groth16::{prepare_verifying_key, Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_relations::lc;
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, Variable};
@@ -10,8 +7,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError
 use ark_snark::SNARK;
 use ark_std::{rand::thread_rng, UniformRand};
 use borsh::{to_vec, BorshDeserialize, BorshSerialize};
-use light_poseidon::{Poseidon, PoseidonBytesHasher, PoseidonHasher};
+use light_poseidon::{Poseidon, PoseidonHasher};
+use sha2::{Digest, Sha256};
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::clock::Epoch;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     instruction::{AccountMeta, Instruction},
@@ -19,10 +18,9 @@ use solana_sdk::{
     signature::{Keypair, Signer},
     transaction::Transaction,
 };
+use std::fs::File;
+use std::io::{BufReader, Write};
 use std::str::FromStr;
-use sha2::{Digest, Sha256};
-use solana_sdk::clock::Epoch;
-use solana_sdk::signer::EncodableKey;
 
 #[derive(BorshSerialize, BorshDeserialize)]
 struct SerializableProof {
@@ -34,7 +32,7 @@ struct SerializableProof {
 #[derive(BorshSerialize, BorshDeserialize)]
 struct ProofPackage {
     proof: Vec<u8>,
-    public_inputs: Vec<[u8; 32]>,
+    public_inputs: Vec<u8>,
 }
 
 /// Represents the state of an account.
@@ -61,11 +59,9 @@ pub struct AccountStateCircuit {
     pub account_states: Vec<AccountState>,
     pub account_hash: Option<Fr>,
     pub lamports_sum: Option<u64>,
-    // pub datum_hash: Option<Fr>,
 }
 
 impl AccountStateCircuit {
-
     pub fn new_2(account_states: Vec<AccountState>) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(&Pubkey::new_unique().to_bytes());
@@ -84,54 +80,20 @@ impl AccountStateCircuit {
             lamports_sum += account.lamports;
         }
 
-        // let merkle_node_hash = /* compute your merkle node hash */;
-
         let circuit = AccountStateCircuit {
             merkle_node_hash: Some(Fr::from_le_bytes_mod_order(&merkle_node_hash)),
             account_states,
             account_hash: Some(addresses_hash),
             lamports_sum: Some(lamports_sum),
-            // datum_hash: Some(datum_hash),
         };
 
         circuit
     }
-    // pub fn new(merkle_node_hashes: Vec<[u8; 32]>, account_states: Vec<AccountState> ) -> Self {
-    //      let merkle_node_hash = Self::hash_vec_u8_32(&merkle_node_hashes);
-    //
-    //     // let datum_size = account_states.iter().map(|account| &account.data).map(|data| data.len()).sum();
-    //     // let mut poseidon = PoseidonHasher::<Bn254>::default();
-    //     let address_hash = Self::hash_vec_u8_32(&account_states.iter().map(|account| account.address.to_bytes()).collect::<Vec<_>>());
-    //     // let fp = Fr::from_le_bytes_mod_order(&ah);
-    //     // let ah  = poseidon.hash_bytes_le(ah);
-    //     // let addresses_hash = poseidon.hash(&account_states.iter().map(|account| Fr::from_le_bytes_mod_order(&account.address.to_bytes())).collect::<Vec<_>>()).unwrap();
-    //     let lamports_sum = account_states.iter().map(|account| account.lamports).sum();
-    //     // let mut poseidon = Poseidon::<Fr>::new_circom(account_states.len()).unwrap();
-    //     // let datum_hash = poseidon.hash(&account_states.iter().flat_map(|account| account.data.iter()).map(|&b| Fr::from(b as u64)).collect::<Vec<_>>()).unwrap();
-    //     // let mut poseidon = Poseidon::<Fr>::new_circom(account_states[0].data.len()).unwrap();
-    //     // let datum_hash = poseidon.hash(&account_states[0].data.iter().map(|&b| Fr::from(b as u64)).collect::<Vec<_>>()).expect("");
-    //     // let rng = &mut thread_rng();
-    //
-    //
-    //     // Pubkey::new_unique();
-    //     // Compute public key (simplified, not actual Ed25519)
-    //     // let public_key = private_key * Fr::from(8u64);
-    //
-    //     // Compute data hash using Poseido
-    //     // let data_hash = poseidon.hash(&account.data.iter().map(|&b| Fr::from(b as u64)).collect::<Vec<_>>()).expect("");
-    //     Self {
-    //         merkle_node_hash: Some(Fr::from_le_bytes_mod_order(&merkle_node_hash)),
-    //         addresses_hash: Some(Fr::from_le_bytes_mod_order(&address_hash)),
-    //         lamports_sum: Some(lamports_sum),
-    //         // datum_hash: Some(datum_hash),
-    //     }
-    // }
 
     pub fn public_inputs(&self) -> Vec<[u8; 32]> {
         let public_inputs: Vec<[u8; 32]> = vec![
             field_to_bytes(self.account_hash.unwrap()),
             field_to_bytes(Fr::from(self.lamports_sum.unwrap())),
-            // field_to_bytes(self.datum_hash.unwrap()),
         ];
 
         public_inputs
@@ -164,11 +126,9 @@ impl ConstraintSynthesizer<Fr> for AccountStateCircuit {
         for account in &self.account_states {
             let address_fr = Fr::from_le_bytes_mod_order(&account.address.to_bytes());
             let datum_fr = Fr::from_le_bytes_mod_order(&account.data.as_slice());
-            let address_var = cs.new_witness_variable(|| Ok(address_fr))?;
             address_vars.push((address_fr, datum_fr));
 
             let lamport_fr = Fr::from(account.lamports);
-            let lamport_var = cs.new_witness_variable(|| Ok(lamport_fr))?;
             lamport_vars.push(lamport_fr);
         }
 
@@ -221,7 +181,7 @@ impl ConstraintSynthesizer<Fr> for AccountStateCircuit {
 }
 
 #[tokio::main]
-async fn main2() {
+async fn main() {
     // Connect to the Solana devnet
     let rpc_url = "http://127.0.0.1:8899".to_string();
     let client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
@@ -249,7 +209,7 @@ async fn main2() {
 
     let keypair = Keypair::from_bytes(&[102, 65, 240, 4, 165, 188, 24, 208, 195, 210, 69, 79, 177, 151, 41, 61, 187, 215, 169, 103, 232, 151, 100, 174, 111, 71, 230, 69, 134, 83, 190, 138, 56, 251, 106, 56, 230, 253, 235, 109, 233, 254, 126, 1, 142, 210, 202, 20, 156, 148, 127, 46, 232, 170, 84, 84, 35, 53, 93, 159, 205, 0, 128, 77]).expect("");
     // Generate a random private key (in a real scenario, this would be your actual private key)
-    let private_key = Fr::from_le_bytes_mod_order(&keypair.secret().to_bytes());// Fr::rand(&mut thread_rng());
+    let private_key = Fr::from_le_bytes_mod_order(&keypair.secret().to_bytes()); // Fr::rand(&mut thread_rng());
 
     // Generate the proof
     let mut hasher = Sha256::new();
@@ -300,7 +260,7 @@ async fn request_airdrop(client: &RpcClient, pubkey: &Pubkey, amount: u64) -> Re
     Ok(())
 }
 
-fn main() {
+fn main2() {
     let payer = Keypair::new();
 
     let account = AccountState {
@@ -312,63 +272,36 @@ fn main() {
         rent_epoch: 0,
     };
 
-    // Generate a random private key (in a real scenario, this would be your actual private key)
-    let private_key = Fr::rand(&mut thread_rng());
-
     // Generate the proof
-    // let (proof_package, vk) = generate_proof(&account, private_key);
     let keypair = Keypair::new();
     // Generate a random private key (in a real scenario, this would be your actual private key)
-    let private_key = Fr::from_le_bytes_mod_order(&keypair.secret().to_bytes());// Fr::rand(&mut thread_rng());
+    let private_key = Fr::from_le_bytes_mod_order(&keypair.secret().to_bytes()); // Fr::rand(&mut thread_rng());
 
     // Generate the proof
     let mut hasher = Sha256::new();
     hasher.update(account.address);
-    let (proof_package, vk) = generate_proof(vec![hasher.finalize().into()],vec![account], private_key);
+    let (proof_package, vk) = generate_proof(vec![hasher.finalize().into()], vec![account], private_key);
 
     let proof_package_ser = to_vec(&proof_package).expect("TODO: panic message");
     let (proof_package_deser, pi_deser) = deserialize_proof_package(&proof_package_ser).expect("TODO: panic message");
+
     let is_valid = verify_off_chain(&proof_package_deser, &pi_deser, &vk);
     println!("{}", &is_valid);
 }
 
 fn generate_proof(merkle_node_hashes: Vec<[u8; 32]>, accounts: Vec<AccountState>, private_key: Fr) -> (ProofPackage, VerifyingKey<Bn254>) {
-    let account_state_circuit = AccountStateCircuit::new_2( accounts);
+    let account_state_circuit = AccountStateCircuit::new_2(accounts);
     let rng = &mut thread_rng();
-    //
-    // Pubkey::new_unique();
-    // // Compute public key (simplified, not actual Ed25519)
-    // let public_key = private_key * Fr::from(8u64);
-    //
-    // // Compute data hash using Poseido
-    // let mut poseidon = Poseidon::<Fr>::new_circom(account.data.len()).unwrap();
-    // let data_hash = poseidon.hash(&account.data.iter().map(|&b| Fr::from(b as u64)).collect::<Vec<_>>()).expect("");
-    //
-    // // Set up the circuit
-    // let circuit = AccountStateCircuit {
-    //     address: Some(account.address),
-    //     owner: Some(public_key),
-    //     lamports: Some(account.lamports),
-    //     data_hash: Some(data_hash),
-    // };
 
+    let f = File::open("pk.bin").unwrap();
+    let mut pk_reader = BufReader::new(f);
+    let proving_key = ProvingKey::<Bn254>::deserialize_uncompressed_unchecked(pk_reader).expect("TODO: panic message");
 
-    // let mut pk_from_file = fs::read("/home/waggins/projects/solana-zk-proof-example/on-chain-program-example/pk.bin").expect("TODO: panic message");
-    // let proving_key = ProvingKey::<Bn254>::deserialize_uncompressed(&pk_from_file.clone()[..]).expect("TODO: panic message");
-    //
-    // let vk_from_file = fs::read("/home/waggins/projects/solana-zk-proof-example/on-chain-program-example/vk.bin").expect("TODO: panic message");
-    // let verifying_key = VerifyingKey::<Bn254>::deserialize_uncompressed_unchecked(&vk_from_file[..]).expect("TODO: panic message");
-    // Generate parameters
-    let (proving_key, verifying_key) = Groth16::<Bn254>::circuit_specific_setup(account_state_circuit.clone(), rng).unwrap();
-    // let mut file = File::create("vk.bin").unwrap();
-    // let mut vk_bytes = Vec::new();
-    // vk.serialize_uncompressed(&mut vk_bytes).expect("");
-    // file.write(&vk_bytes).expect("TODO: panic message");
-    //
-    // let mut pk_file = File::create("pk.bin").unwrap();
-    // let mut pk_bytes = Vec::new();
-    // vk.serialize_uncompressed(&mut pk_bytes).expect("");
-    // pk_file.write(&pk_bytes).expect("TODO: panic message");
+    let f = File::open("vk.bin").unwrap();
+    let vk_reader = BufReader::new(f);
+    let verifying_key = VerifyingKey::<Bn254>::deserialize_uncompressed_unchecked(vk_reader).expect("TODO: panic message");
+
+    let pvk = prepare_verifying_key(&verifying_key);
 
     let public_inputs = account_state_circuit.public_inputs();
 
@@ -378,27 +311,21 @@ fn generate_proof(merkle_node_hashes: Vec<[u8; 32]>, accounts: Vec<AccountState>
                                         rng,
     ).unwrap();
 
-
     let mut proof_bytes = Vec::new();
     proof.serialize_uncompressed(&mut proof_bytes).expect("TODO: panic message");
 
-    // Convert the proof to our serializable format
-    // let serializable_proof = SerializableProof {
-    //     a: g1_to_bytes(proof.a),
-    //     b: [g2_to_bytes(proof.b.x), g2_to_bytes(proof.b.y)],
-    //     c: g1_to_bytes(proof.c),
-    // };
-    //
-    // let public_inputs: Vec<[u8; 32]> = vec![
-    //     field_to_bytes(public_key),
-    //     field_to_bytes(Fr::from(account.balance)),
-    //     field_to_bytes(data_hash),
-    // ];
+    let public_inputs_fr = public_inputs
+        .iter()
+        .map(|input| bytes_to_field(input))
+        .collect::<Result<Vec<Fr>, _>>().expect("");
+    let projective: G1Projective = Groth16::<Bn254>::prepare_inputs(&pvk, &public_inputs_fr).expect("TODO: panic message");
 
+    let projective_bytes = Vec::new();
+    let _ = projective.serialize_uncompressed(projective_bytes.clone());
 
     (ProofPackage {
         proof: proof_bytes.clone(),
-        public_inputs,
+        public_inputs: projective_bytes,
     }, verifying_key)
 }
 
@@ -425,39 +352,19 @@ fn field_to_bytes<F: PrimeField>(field: F) -> [u8; 32] {
     bytes
 }
 
-
 fn deserialize_proof_package(serialized_data: &[u8]) -> Result<(Proof<Bn254>, Vec<Fr>), Box<dyn std::error::Error>> {
     // Deserialize the ProofPackage
     let proof_package = ProofPackage::try_from_slice(serialized_data)?;
     let proof = Proof::<Bn254>::deserialize_uncompressed_unchecked(&proof_package.proof[..]).expect("TODO: panic message");
 
-    // Deserialize the Proof
-    // let a = G1Affine::new(
-    //     bytes_to_field(&proof_package.proof.a[0..32])?,
-    //     bytes_to_field(&proof_package.proof.a[32..64])?,
-    // );
-    //
-    // let b = G2Affine::new(
-    //         bytes_to_g2_from_slice(&proof_package.proof.b[0][0..64])?,
-    //         bytes_to_g2_from_slice(&proof_package.proof.b[1][0..64])?
-    // );
-    //
-    // let c = G1Affine::new(
-    //     bytes_to_field(&proof_package.proof.c[0..32])?,
-    //     bytes_to_field(&proof_package.proof.c[32..64])?,
-    // );
-    //
-    // let proof = Proof { a, b, c };
-
     // Deserialize public inputs
-    let public_inputs = proof_package.public_inputs
-        .iter()
-        .map(|input| bytes_to_field(input))
-        .collect::<Result<Vec<Fr>, _>>()?;
+    // let public_inputs = proof_package.public_inputs
+    //     .iter()
+    //     .map(|input| Fr::from(input))
+    //     .collect::<Result<Vec<Fr>, _>>()?;
 
-    Ok((proof, public_inputs))
+    Ok((proof, Vec::new()))
 }
-
 
 fn bytes_to_g2_from_slice(slice: &[u8]) -> Result<Fq2, SerializationError> {
     if slice.len() != 64 {

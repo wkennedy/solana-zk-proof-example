@@ -1,34 +1,23 @@
-use std::error::Error;
-use std::ops::Neg;
-use ark_ff::{BigInteger, BigInteger256, PrimeField};
+use ark_bn254::{Bn254, Fq2};
+use ark_ff::PrimeField;
 use ark_groth16::Proof;
-use ark_bn254::{Bn254, Fq, Fq2, Fr, G1Affine, G2Affine};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::alt_bn128::prelude::*;
+use solana_program::instruction::InstructionError::InvalidInstructionData;
+use solana_program::program_error::ProgramError;
 use solana_program::{
     account_info::AccountInfo,
     entrypoint,
     entrypoint::ProgramResult,
-    pubkey::Pubkey,
     msg,
+    pubkey::Pubkey,
 };
-use solana_program::alt_bn128::prelude::*;
-use solana_program::instruction::InstructionError::InvalidInstructionData;
-use solana_program::program_error::ProgramError;
-
-const VK: &[u8] = include_bytes!("/home/waggins/projects/solana-zk-proof-example/on-chain-program-example/vk.bin");
-
-#[derive(BorshSerialize, BorshDeserialize)]
-struct SerializableProof {
-    a: [u8; 64],
-    b: [[u8; 64]; 2],
-    c: [u8; 64],
-}
 
 #[derive(Debug, BorshSerialize, BorshDeserialize)]
 struct ProofPackage {
     proof: Vec<u8>,
-    public_inputs: Vec<[u8; 32]>,
+    public_inputs: Vec<u8>,
 }
 
 // On-chain verification (Solana program)
@@ -39,26 +28,19 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
-    // msg!("Verifying Solana account zk-SNARK proof");
 
     // Deserialize proof and public inputs from instruction_data
     // Note: In a real implementation, you'd need to properly deserialize this data
     let (proof, public_inputs) = deserialize_proof_package(instruction_data).unwrap();
 
-    let mut pairing_data = Vec::new(); // 64 + 128 + 64 + 3 * 32
+    let pairing_data = Vec::new(); // 64 + 128 + 64 + 3 * 32
 
-    proof.serialize_uncompressed( pairing_data.clone()).expect("");
+    proof.serialize_uncompressed(pairing_data.clone()).expect("");
 
-    let mut pis = Vec::new();
-
-    for pi in &public_inputs {
-        pis.extend_from_slice(pi.0.to_bytes_le().as_slice())
-    }
-
-    msg!("{:?}", VK.len());
+    // let slice = vec_array_to_slice(&public_inputs);
 
     // Verify the proof
-    let result = verify_groth16_proof(pairing_data.as_slice(), &pis)?;
+    let result = verify_groth16_proof(pairing_data.as_slice(), &public_inputs)?;
 
     if result {
         msg!("Proof is valid! Account properties verified.");
@@ -76,71 +58,23 @@ fn verify_groth16_proof(
 ) -> Result<bool, ProgramError> {
     // Prepare the inputs for the pairing check
     let mut pairing_inputs = Vec::new();
-    pairing_inputs.extend_from_slice(VK);
     pairing_inputs.extend_from_slice(proof);
     pairing_inputs.extend_from_slice(public_inputs);
 
     // Perform the pairing check
     let result = alt_bn128_pairing(&pairing_inputs);
 
-    // The result should be a 32-byte array. If it's all zeros, the pairing check succeeded.
-    // let int = BigInteger256::from(result.unwrap().as_slice());
-    // result.unwrap().last() == Some(&1);
     Ok(result.unwrap().last() == Some(&1))
 }
 
-// Helper functions (implementation omitted for brevity)
-fn deserialize_proof_and_inputs(data: &[u8]) -> Result<(Vec<u8>, Vec<u8>), ProgramError> {
-    // Implementation omitted
-    unimplemented!()
-}
-
-fn deserialize_proof_package(serialized_data: &[u8]) -> Result<(Proof<Bn254>, Vec<Fr>), Box<dyn std::error::Error>> {
+fn deserialize_proof_package(serialized_data: &[u8]) -> Result<(Proof<Bn254>, Vec<u8>), Box<dyn std::error::Error>> {
     // Deserialize the ProofPackage
     let proof_package = ProofPackage::try_from_slice(serialized_data)?;
 
-    // msg!("{:?}", &proof_package);
-
     let proof1 = Proof::<Bn254>::deserialize_uncompressed_unchecked(&proof_package.proof[..]).expect("TODO: panic message");
 
-    // Deserialize the Proof
-    // let a = G1Affine::new(
-    //     bytes_to_field(&proof_package.proof.a[0..32])?,
-    //     bytes_to_field(&proof_package.proof.a[32..64])?,
-    // );
-    //
-    // let b = G2Affine::new(
-    //
-    //     bytes_to_g2_from_slice(&proof_package.proof.b[0][0..64])?
-    //     ,
-    //
-    //     bytes_to_g2_from_slice(&proof_package.proof.b[1][0..64])?
-    //     ,
-    // );
-    //
-    // let c = G1Affine::new(
-    //     bytes_to_field(&proof_package.proof.c[0..32])?,
-    //     bytes_to_field(&proof_package.proof.c[32..64])?,
-    // );
-    //
-    // let proof = Proof { a, b, c };
-    //
-    // Deserialize public inputs
-    let public_inputs = proof_package.public_inputs
-        .iter()
-        .map(|input| bytes_to_field(input))
-        .collect::<Result<Vec<Fr>, _>>()?;
-
-    // let public_inputs: Vec<Fr> = Vec::new();
-    Ok((proof1, public_inputs))
+    Ok((proof1, proof_package.public_inputs))
 }
-
-// fn bytes_to_field(bytes: &[u8]) -> Result<Fq, Box<dyn std::error::Error>> {
-//     let mut bytes_arr = [0u8; 32];
-//     bytes_arr.copy_from_slice(bytes);
-//     Ok(Fq::from_le_bytes_mod_order(&bytes_arr))
-// }
-
 
 fn bytes_to_g2_from_slice(slice: &[u8]) -> anyhow::Result<Fq2> {
     // if slice.len() != 64 {
@@ -161,70 +95,6 @@ fn bytes_to_g2(bytes: &[u8; 64]) -> anyhow::Result<Fq2, anyhow::Error> {
 fn bytes_to_field<F: PrimeField>(bytes: &[u8]) -> anyhow::Result<F, anyhow::Error> {
     Ok(F::deserialize_uncompressed(bytes)?)
 }
-//
-//
-// pub fn prepare_and_verify_proof(proof: &Proof<Bn254>) -> Result<bool, ProgramError> {
-//     let mut input = Vec::new();
-//
-//     // Prepare A (G1 point)
-//     let a_x = proof.a.x.into_bigint().to_bytes_le();
-//     let a_y = proof.a.y.into_bigint().to_bytes_le();
-//     input.extend_from_slice(&pad_to_64_bytes(&a_x));
-//     input.extend_from_slice(&pad_to_64_bytes(&a_y));
-//
-//     // Prepare B (G2 point)
-//     let b_x_c0 = proof.b.x.c0.into_bigint().to_bytes_le();
-//     let b_x_c1 = proof.b.x.c1.into_bigint().to_bytes_le();
-//     let b_y_c0 = proof.b.y.c0.into_bigint().to_bytes_le();
-//     let b_y_c1 = proof.b.y.c1.into_bigint().to_bytes_le();
-//     input.extend_from_slice(&pad_to_64_bytes(&b_x_c0));
-//     input.extend_from_slice(&pad_to_64_bytes(&b_x_c1));
-//     input.extend_from_slice(&pad_to_64_bytes(&b_y_c0));
-//     input.extend_from_slice(&pad_to_64_bytes(&b_y_c1));
-//
-//     // Prepare -alpha * A (negation of A)
-//     let neg_a = proof.a.neg();
-//     let neg_a_x = neg_a.x.into_bigint().to_bytes_le();
-//     let neg_a_y = neg_a.y.into_bigint().to_bytes_le();
-//     input.extend_from_slice(&pad_to_64_bytes(&neg_a_x));
-//     input.extend_from_slice(&pad_to_64_bytes(&neg_a_y));
-//
-//     // Prepare alpha (G2 generator)
-//     let alpha = G2Affine::prime_subgroup_generator();
-//     let alpha_x_c0 = alpha.x.c0.into_bigint().to_bytes_le();
-//     let alpha_x_c1 = alpha.x.c1.into_bigint().to_bytes_le();
-//     let alpha_y_c0 = alpha.y.c0.into_bigint().to_bytes_le();
-//     let alpha_y_c1 = alpha.y.c1.into_bigint().to_bytes_le();
-//     input.extend_from_slice(&pad_to_64_bytes(&alpha_x_c0));
-//     input.extend_from_slice(&pad_to_64_bytes(&alpha_x_c1));
-//     input.extend_from_slice(&pad_to_64_bytes(&alpha_y_c0));
-//     input.extend_from_slice(&pad_to_64_bytes(&alpha_y_c1));
-//
-//     // Prepare C (G1 point)
-//     let c_x = proof.c.x.into_bigint().to_bytes_le();
-//     let c_y = proof.c.y.into_bigint().to_bytes_le();
-//     input.extend_from_slice(&pad_to_64_bytes(&c_x));
-//     input.extend_from_slice(&pad_to_64_bytes(&c_y));
-//
-//     // Prepare beta (G2 generator)
-//     let beta = E::G2Affine::prime_subgroup_generator();
-//     let beta_x_c0 = beta.x.c0.into_bigint().to_bytes_le();
-//     let beta_x_c1 = beta.x.c1.into_bigint().to_bytes_le();
-//     let beta_y_c0 = beta.y.c0.into_bigint().to_bytes_le();
-//     let beta_y_c1 = beta.y.c1.into_bigint().to_bytes_le();
-//     input.extend_from_slice(&pad_to_64_bytes(&beta_x_c0));
-//     input.extend_from_slice(&pad_to_64_bytes(&beta_x_c1));
-//     input.extend_from_slice(&pad_to_64_bytes(&beta_y_c0));
-//     input.extend_from_slice(&pad_to_64_bytes(&beta_y_c1));
-//
-//     // Call the syscall
-//     match alt_bn128_pairing(&input) {
-//         Ok(1) => Ok(true),
-//         Ok(0) => Ok(false),
-//         Ok(_) => Err(ProgramError::InvalidAccountData),
-//         Err(_) => Err(ProgramError::InvalidAccountData),
-//     }
-// }
 
 fn pad_to_64_bytes(input: &[u8]) -> Vec<u8> {
     let mut result = vec![0u8; 64];
@@ -233,3 +103,7 @@ fn pad_to_64_bytes(input: &[u8]) -> Vec<u8> {
     result
 }
 
+// fn vec_array_to_slice(input: &Vec<[u8; 32]>) -> &[u8] {
+//     // This works because Vec<[u8; 32]> has the same memory layout as [u8]
+//     unsafe { std::slice::from_raw_parts(input.as_ptr() as *const u8, input.len() * 32) }
+// }
