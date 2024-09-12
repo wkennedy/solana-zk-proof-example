@@ -33,11 +33,9 @@ pub fn process_instruction(
     // Note: In a real implementation, you'd need to properly deserialize this data
     let (proof, public_inputs) = deserialize_proof_package(instruction_data).unwrap();
 
-    let pairing_data = Vec::new(); // 64 + 128 + 64 + 3 * 32
+    let pairing_data = Vec::new();
 
     proof.serialize_uncompressed(pairing_data.clone()).expect("");
-
-    // let slice = vec_array_to_slice(&public_inputs);
 
     // Verify the proof
     let result = verify_groth16_proof(pairing_data.as_slice(), &public_inputs)?;
