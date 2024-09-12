@@ -21,13 +21,7 @@ use solana_sdk::{
 use std::fs::File;
 use std::io::{BufReader, Write};
 use std::str::FromStr;
-
-#[derive(BorshSerialize, BorshDeserialize)]
-struct SerializableProof {
-    a: [u8; 64],
-    b: [[u8; 64]; 2],
-    c: [u8; 64],
-}
+use tokio::fs;
 
 #[derive(BorshSerialize, BorshDeserialize)]
 struct ProofPackage {
@@ -62,7 +56,7 @@ pub struct AccountStateCircuit {
 }
 
 impl AccountStateCircuit {
-    pub fn new_2(account_states: Vec<AccountState>) -> Self {
+    pub fn new(account_states: Vec<AccountState>) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(&Pubkey::new_unique().to_bytes());
         let merkle_node_hash: [u8; 32] = hasher.finalize().into();
@@ -207,15 +201,11 @@ async fn main() {
         rent_epoch: 0,
     };
 
-    let keypair = Keypair::from_bytes(&[102, 65, 240, 4, 165, 188, 24, 208, 195, 210, 69, 79, 177, 151, 41, 61, 187, 215, 169, 103, 232, 151, 100, 174, 111, 71, 230, 69, 134, 83, 190, 138, 56, 251, 106, 56, 230, 253, 235, 109, 233, 254, 126, 1, 142, 210, 202, 20, 156, 148, 127, 46, 232, 170, 84, 84, 35, 53, 93, 159, 205, 0, 128, 77]).expect("");
-    // Generate a random private key (in a real scenario, this would be your actual private key)
-    let private_key = Fr::from_le_bytes_mod_order(&keypair.secret().to_bytes()); // Fr::rand(&mut thread_rng());
-
     // Generate the proof
     let mut hasher = Sha256::new();
     hasher.update(account.address);
 
-    let (proof_package, vk) = generate_proof(vec![hasher.finalize().into()], vec![account], private_key);
+    let (proof_package, vk) = generate_proof(vec![account]).await;
     let mut file = File::create("vk.bin").unwrap();
     let mut vk_bytes = Vec::new();
     vk.serialize_uncompressed(&mut vk_bytes).expect("");
@@ -260,7 +250,8 @@ async fn request_airdrop(client: &RpcClient, pubkey: &Pubkey, amount: u64) -> Re
     Ok(())
 }
 
-fn main2() {
+// #[tokio::main]
+async fn main2() {
     let payer = Keypair::new();
 
     let account = AccountState {
@@ -273,14 +264,9 @@ fn main2() {
     };
 
     // Generate the proof
-    let keypair = Keypair::new();
-    // Generate a random private key (in a real scenario, this would be your actual private key)
-    let private_key = Fr::from_le_bytes_mod_order(&keypair.secret().to_bytes()); // Fr::rand(&mut thread_rng());
-
-    // Generate the proof
     let mut hasher = Sha256::new();
     hasher.update(account.address);
-    let (proof_package, vk) = generate_proof(vec![hasher.finalize().into()], vec![account], private_key);
+    let (proof_package, vk) = generate_proof(vec![account]).await;
 
     let proof_package_ser = to_vec(&proof_package).expect("TODO: panic message");
     let (proof_package_deser, pi_deser) = deserialize_proof_package(&proof_package_ser).expect("TODO: panic message");
@@ -289,9 +275,28 @@ fn main2() {
     println!("{}", &is_valid);
 }
 
-fn generate_proof(merkle_node_hashes: Vec<[u8; 32]>, accounts: Vec<AccountState>, private_key: Fr) -> (ProofPackage, VerifyingKey<Bn254>) {
-    let account_state_circuit = AccountStateCircuit::new_2(accounts);
+async fn generate_proof(accounts: Vec<AccountState>) -> (ProofPackage, VerifyingKey<Bn254>) {
+    let account_state_circuit = AccountStateCircuit::new(accounts);
     let rng = &mut thread_rng();
+
+    let exists = fs::try_exists("pk.bin").await;
+    match exists {
+        Ok(exists) => {
+            if !exists {
+                let (proving_key, verifying_key) = Groth16::<Bn254>::circuit_specific_setup(account_state_circuit.clone(), rng).unwrap();
+                let mut file = File::create("vk.bin").unwrap();
+                let mut vk_bytes = Vec::new();
+                verifying_key.serialize_uncompressed(&mut vk_bytes).expect("");
+                file.write(&vk_bytes).expect("TODO: panic message");
+
+                let mut pk_file = File::create("pk.bin").unwrap();
+                let mut pk_bytes = Vec::new();
+                proving_key.serialize_uncompressed(&mut pk_bytes).expect("");
+                pk_file.write(&pk_bytes).expect("TODO: panic message");
+            }
+        }
+        Err(_) => {}
+    }
 
     let f = File::open("pk.bin").unwrap();
     let mut pk_reader = BufReader::new(f);
