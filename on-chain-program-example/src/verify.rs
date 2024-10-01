@@ -1,4 +1,4 @@
-use crate::byte_utils::{convert_endianness_128, convert_endianness_64, convert_endianness_64_to_vec};
+use crate::byte_utils::{convert_endianness_128, convert_endianness_128_to_vec, convert_endianness_64, convert_endianness_64_to_vec};
 use crate::prove::ProofPackage;
 use ark_bn254::{Bn254, G1Projective};
 use ark_ec::pairing::Pairing;
@@ -153,7 +153,7 @@ pub fn alt_bn128_pairing2(input: &[u8]) -> Result<Vec<u8>, AltBn128Error> {
 
         // Extract and convert G2 bytes
         let g2_bytes = &input[g2_start..g2_end];
-        let g2_converted = convert_endianness_128(g2_bytes);
+        let g2_converted = convert_endianness_128_to_vec(g2_bytes);
         let g2 = PodG2(g2_converted.try_into().map_err(AltBn128Error::TryIntoVecError)?).try_into()?;
 
         vec_pairs.push((g1, g2));

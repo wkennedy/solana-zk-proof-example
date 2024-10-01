@@ -180,11 +180,12 @@ pub fn negate_g1(point: &[u8; 64]) -> Result<[u8; 64], Error> {
 
 #[cfg(test)]
 mod test {
-    use std::ops::{Mul, Neg};
+    use std::ops::{AddAssign, Mul, Neg};
     use crate::example::{convert_arkworks_vk_to_solana_example, convert_vec_to_array_example, ExampleCircuit};
     use crate::verify_lite::{verify_proof, Groth16Verifier};
     use ark_bn254::{Bn254, Fr, G1Projective, G1Affine, G2Affine};
-    use ark_groth16::{prepare_verifying_key, Groth16, Proof};
+    use ark_bn254::g1::Config;
+    use ark_groth16::{prepare_verifying_key, Groth16, Proof, VerifyingKey};
     use ark_serialize::{CanonicalSerialize, Compress};
     use ark_snark::SNARK;
     use rand::thread_rng;
@@ -195,7 +196,9 @@ mod test {
     // use ark_bn254::{Bn254, Fr, G1Affine, G2Affine};
     use ark_ec::{AffineRepr, CurveGroup};
     use ark_ec::pairing::Pairing;
+    use ark_ec::short_weierstrass::Projective;
     use ark_ff::{BigInteger, PrimeField, UniformRand};
+    use ark_relations::r1cs::SynthesisError;
 
     #[test]
     fn should_verify_basic_circuit_groth16() {
@@ -265,6 +268,7 @@ mod test {
         let projective: G1Projective = Groth16::<Bn254>::prepare_inputs(&pvk, &[Fr::from(100)]).expect("Error preparing inputs with public inputs and prepared verifying key");
         let mut g1_bytes = Vec::with_capacity(projective.serialized_size(Compress::No));
         projective.serialize_uncompressed(&mut g1_bytes).expect("");
+        let g1_endian = convert_endianness::<32, 64>(<&[u8; 64]>::try_from(g1_bytes.as_slice()).unwrap());
 
         // let ppp = ProofPackagePrepared {
         //     proof: proof_bytes,
@@ -276,10 +280,10 @@ mod test {
 
 
         let groth_vk = convert_arkworks_vk_to_solana_example(&vk);
-        let mut gamma_abc_g1_bytes = Vec::with_capacity(vk.gamma_abc_g1.serialized_size(Compress::No));
-        &vk.gamma_abc_g1.serialize_uncompressed(&mut gamma_abc_g1_bytes);
-        let from1 = <&[u8; 64]>::try_from(gamma_abc_g1_bytes.as_slice());
-        println!("gamma_abc_g1_bytes: {:?}", from1);
+        // let mut gamma_abc_g1_bytes = Vec::with_capacity(vk.gamma_abc_g1.serialized_size(Compress::No));
+        // &vk.gamma_abc_g1.serialize_uncompressed(&mut gamma_abc_g1_bytes);
+        // let from1 = <&[u8; 64]>::try_from(gamma_abc_g1_bytes.as_slice());
+        // println!("gamma_abc_g1_bytes: {:?}", from1);
         println!("vk_ic: {:?}", &groth_vk.vk_ic);
 
         // let g1 = g1_affine_to_bytes(&fr_to_g1(&Fr::from(100)));
@@ -302,11 +306,12 @@ mod test {
         println!("Proof B: {:?}", proof_b);
         println!("Proof C: {:?}", proof_c);
 
-        let mut verifier: Groth16Verifier<1> = Groth16Verifier::new(
+        let mut verifier: Groth16Verifier<1> = Groth16Verifier::new_prepared(
             &proof_a,
             &proof_b,
             &proof_c,
             &pip,
+            g1_endian,
             &groth_vk,
         ).unwrap();
 
@@ -326,6 +331,22 @@ mod test {
         }
     }
 
+    pub fn prepare_inputs(
+        vk: &VerifyingKey<Bn254>,
+        public_inputs: &[Fr],
+    ) -> Result<Projective<Config>, SynthesisError> {
+        if (public_inputs.len() + 1) != vk.gamma_abc_g1.len() {
+            return Err(SynthesisError::MalformedVerifyingKey);
+        }
+
+        let mut g_ic = vk.gamma_abc_g1[0].into_group();
+        for (i, b) in public_inputs.iter().zip(vk.gamma_abc_g1.iter().skip(1)) {
+            g_ic.add_assign(&b.mul_bigint(i.into_bigint()));
+        }
+
+        Ok(g_ic)
+    }
+    
     #[test]
     fn test_alt_bn128_pairing_true() {
         // This input represents a valid pairing that should return true

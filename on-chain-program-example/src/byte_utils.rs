@@ -27,7 +27,7 @@ pub fn convert_endianness_64_to_vec(bytes: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-pub fn convert_endianness_128(bytes: &[u8]) -> Vec<u8> {
+pub fn convert_endianness_128_to_vec(bytes: &[u8]) -> Vec<u8> {
     bytes.chunks(64)
         .flat_map(|chunk| chunk.iter().rev().cloned().collect::<Vec<u8>>())
         .collect()
@@ -41,9 +41,25 @@ pub fn convert_endianness_64(input: &[u8]) -> [u8; 64] {
     output
 }
 
+pub fn convert_endianness_96(input: &[u8]) -> [u8; 96] {
+    let mut output = [0u8; 96];
+    for (i, &byte) in input.iter().enumerate().take(96) {
+        output[i] = byte.swap_bytes(); // This swaps endianness for each byte
+    }
+    output
+}
+
 pub fn convert_endianness_32(input: &[u8]) -> [u8; 32] {
     let mut output = [0u8; 32];
     for (i, &byte) in input.iter().enumerate().take(32) {
+        output[i] = byte.swap_bytes(); // This swaps endianness for each byte
+    }
+    output
+}
+
+pub fn convert_endianness_128(input: &[u8]) -> [u8; 128] {
+    let mut output = [0u8; 128];
+    for (i, &byte) in input.iter().enumerate().take(128) {
         output[i] = byte.swap_bytes(); // This swaps endianness for each byte
     }
     output

@@ -257,8 +257,9 @@ impl<const NR_INPUTS: usize> Groth16Verifier<'_, NR_INPUTS> {
             if CHECK && !is_less_than_bn254_field_size_be(input) {
                 return Err(Groth16Error::PublicInputGreaterThenFieldSize);
             }
+            let x = [&self.verifyingkey.vk_ic[i + 1][..], &input[..]].concat();
             let mul_res = alt_bn128_multiplication(
-                &[&self.verifyingkey.vk_ic[i + 1][..], &input[..]].concat(),
+                &x
             )
                 .map_err(|error|{ println!("{:?}", error);Groth16Error::PreparingInputsG1MulFailed})?;
             prepared_public_inputs =
@@ -276,7 +277,7 @@ impl<const NR_INPUTS: usize> Groth16Verifier<'_, NR_INPUTS> {
     /// Verifies the proof, and checks that public inputs are smaller than
     /// field size.
     pub fn verify(&mut self) -> Result<bool, Groth16Error> {
-        self.prepare_and_verify_common::<true>()
+        self.verify_common::<true>()
     }
 
     /// Verifies the proof, and does not check that public inputs are smaller
@@ -309,7 +310,6 @@ impl<const NR_INPUTS: usize> Groth16Verifier<'_, NR_INPUTS> {
                 converted
             })
             .collect();
-
         let pairing_res = alt_bn128_pairing(pairing_input.as_slice())
             .map_err(|_| PairingVerificationError)?;
         println!("Pairing result: {:?}", pairing_res);
