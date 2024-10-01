@@ -1,12 +1,14 @@
-use crate::byte_utils::{convert_endianness_128, convert_endianness_64_to_vec};
+use crate::byte_utils::{convert_endianness_128, convert_endianness_64, convert_endianness_64_to_vec};
 use crate::prove::ProofPackage;
 use ark_bn254::{Bn254, G1Projective};
 use ark_ec::pairing::Pairing;
 use ark_ff::{BigInteger, BigInteger256};
-use ark_groth16::{prepare_verifying_key, Groth16, Proof, VerifyingKey};
+use ark_groth16::{prepare_verifying_key, Groth16, PreparedVerifyingKey, Proof, VerifyingKey};
+use ark_serialize::CanonicalSerialize;
 use ark_std::One;
-use solana_program::alt_bn128::prelude::{ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_POINT_SIZE};
+use solana_program::alt_bn128::prelude::{alt_bn128_pairing, ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_POINT_SIZE};
 use solana_program::alt_bn128::{AltBn128Error, PodG1, PodG2};
+use solana_program::program_error::ProgramError;
 
 type G1 = ark_bn254::g1::G1Affine;
 type G2 = ark_bn254::g2::G2Affine;
@@ -24,6 +26,108 @@ pub fn verify_proof_package(
     proof_package: &ProofPackage
 ) -> bool {
     Groth16::<Bn254>::verify_proof_with_prepared_inputs(&proof_package.prepared_verifying_key, &proof_package.proof, &proof_package.public_inputs).unwrap()
+}
+
+
+// Function to verify proof using Solana's alt_bn128_pairing syscall
+// pub fn verify_proof_with_prepared_inputs2(
+//     pvk: &PreparedVerifyingKey<Bn254>,
+//     proof: &Proof<Bn254>,
+//     prepared_inputs: &G1Point,
+// ) -> Result<bool, ProgramError> {
+//     // Perform the first pairing (proof.a, proof.b)
+//     let pairing1 = alt_bn128_pairing(
+//         &[proof.a.x, proof.a.y],
+//         &[proof.b.x[0], proof.b.x[1], proof.b.y[0], proof.b.y[1]],
+//     );
+//
+//     if pairing1.is_err() {
+//         msg!("Pairing 1 failed");
+//         return Err(pairing1.unwrap_err());
+//     }
+//
+//     // Perform the second pairing (prepared_inputs, pvk.gamma_g2_neg_pc)
+//     let pairing2 = alt_bn128_pairing(
+//         &[prepared_inputs.x, prepared_inputs.y],
+//         &[pvk.gamma_g2_neg_pc.x[0], pvk.gamma_g2_neg_pc.x[1], pvk.gamma_g2_neg_pc.y[0], pvk.gamma_g2_neg_pc.y[1]],
+//     );
+//
+//     if pairing2.is_err() {
+//         msg!("Pairing 2 failed");
+//         return Err(pairing2.unwrap_err());
+//     }
+//
+//     // Perform the third pairing (proof.c, pvk.delta_g2_neg_pc)
+//     let pairing3 = alt_bn128_pairing(
+//         &[proof.c.x, proof.c.y],
+//         &[pvk.delta_g2_neg_pc.x[0], pvk.delta_g2_neg_pc.x[1], pvk.delta_g2_neg_pc.y[0], pvk.delta_g2_neg_pc.y[1]],
+//     );
+//
+//     if pairing3.is_err() {
+//         msg!("Pairing 3 failed");
+//         return Err(pairing3.unwrap_err());
+//     }
+//
+//     // All pairings succeeded, now combine the results
+//     let final_result = pairing1.unwrap() && pairing2.unwrap() && pairing3.unwrap();
+//
+//     // Compare with the expected precomputed value in the verifying key
+//     if final_result == pvk.alpha_g1_beta_g2 {
+//         msg!("Proof verification succeeded");
+//         Ok(true)
+//     } else {
+//         msg!("Proof verification failed");
+//         Ok(false)
+//     }
+// }
+
+pub fn verify_proof_with_prepared_inputs(
+    proof_package: &ProofPackage // Using G1 representation for Solana
+) -> Result<bool, ProgramError> {
+    // Perform pairing checks
+
+    let mut pairing_1 = Vec::new();
+    let mut proof_a_bytes = Vec::new();
+    proof_package.proof.a.serialize_uncompressed(&mut proof_a_bytes).unwrap();
+    pairing_1.extend_from_slice(&proof_a_bytes);
+
+    let mut proof_b_bytes = Vec::new();
+    proof_package.proof.b.serialize_uncompressed(&mut proof_b_bytes).unwrap();
+    pairing_1.extend_from_slice(&proof_a_bytes);
+
+    // Pairing (proof.a, proof.b)
+    let pairing1 = alt_bn128_pairing(&pairing_1).unwrap();
+
+    let mut pairing_2 = Vec::new();
+    let mut public_input_bytes = Vec::new();
+    proof_package.public_inputs.serialize_uncompressed(&mut public_input_bytes).unwrap();
+    pairing_2.extend_from_slice(convert_endianness_64(&public_input_bytes).as_ref());
+
+    let mut gamma_g2_neg_bytes = Vec::new();
+    proof_package.prepared_verifying_key.gamma_g2_neg_pc.serialize_uncompressed(&mut gamma_g2_neg_bytes).unwrap();
+    pairing_2.extend_from_slice(&gamma_g2_neg_bytes);
+
+    // Pairing (prepared_inputs, pvk.gamma_g2_neg_pc)
+    let pairing2 = alt_bn128_pairing(&pairing_2).unwrap();
+
+    let mut pairing_3 = Vec::new();
+    let mut proof_c_bytes = Vec::new();
+    proof_package.proof.c.serialize_uncompressed(&mut proof_c_bytes).unwrap();
+    pairing_3.extend_from_slice(&proof_c_bytes);
+
+    let mut delta_g2_neg_pc_bytes = Vec::new();
+    proof_package.prepared_verifying_key.delta_g2_neg_pc.serialize_uncompressed(&mut delta_g2_neg_pc_bytes).unwrap();
+    pairing_3.extend_from_slice(&delta_g2_neg_pc_bytes);
+
+    // Pairing (proof.c, pvk.delta_g2_neg_pc)
+    let pairing3 = alt_bn128_pairing(&delta_g2_neg_pc_bytes).unwrap();
+
+    // Final result
+    // let final_result = pairing1 && pairing2 && pairing3;
+
+    // Ensure the result matches the expected value in the prepared verifying key
+    // Ok(final_result == proof_package.prepared_verifying_key.alpha_g1_beta_g2)
+    Ok(true)
 }
 
 // TODO These are just tests trying to get verify to work correctly

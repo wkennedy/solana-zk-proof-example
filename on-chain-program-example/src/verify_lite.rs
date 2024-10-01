@@ -1,18 +1,22 @@
-use crate::byte_utils::{convert_endianness_128, convert_endianness_32, convert_endianness_64};
+use std::ops::Neg;
+use crate::byte_utils::{change_endianness, convert_endianness_128, convert_endianness_32, convert_endianness_64};
 use crate::errors::Groth16Error;
-use crate::prove::ProofPackageLite;
+use crate::prove::{ProofPackageLite, ProofPackagePrepared};
 use ark_bn254::Bn254;
 use ark_ff::PrimeField;
-use ark_groth16::VerifyingKey;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_groth16::{PreparedVerifyingKey, Proof, VerifyingKey};
+use ark_relations::r1cs::SynthesisError;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 use num_bigint::BigUint;
 use solana_program::alt_bn128::compression::prelude::convert_endianness;
 use solana_program::alt_bn128::prelude::{alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing, ALT_BN128_PAIRING_ELEMENT_LEN};
 use solana_program::alt_bn128::AltBn128Error;
+use crate::errors::Groth16Error::{PairingVerificationError, ProofVerificationFailed};
 
+type G1 = ark_bn254::g1::G1Affine;
 
 // TODO THIS ONE WORKS FOR PREPARED PUBLIC INPUT - Sort of
-fn verify_proof(proof_package: ProofPackageLite, verifying_key: VerifyingKey<Bn254>) -> Result<bool, AltBn128Error> {
+pub fn verify_proof(proof_package: ProofPackagePrepared) -> Result<bool, AltBn128Error> {
     let mut pairing_input = Vec::new();
 
     // Check proof size
@@ -26,6 +30,17 @@ fn verify_proof(proof_package: ProofPackageLite, verifying_key: VerifyingKey<Bn2
         println!("Public inputs size is incorrect: {} bytes", proof_package.public_inputs.len());
         return Err(AltBn128Error::InvalidInputData);
     }
+
+    let verifying_key = VerifyingKey::<Bn254>::deserialize_uncompressed_unchecked(&proof_package.verifying_key[..]).unwrap();
+
+    // self.proof_a.as_slice(),
+    // self.proof_b.as_slice(),
+    // self.prepared_public_inputs.as_slice(),
+    // self.verifyingkey.vk_gamma_g2.as_slice(),
+    // self.proof_c.as_slice(),
+    // self.verifyingkey.vk_delta_g2.as_slice(),
+    // self.verifyingkey.vk_alpha_g1.as_slice(),
+    // self.verifyingkey.vk_beta_g2.as_slice(),
 
     // Pair 1: proof.a (G1) and proof.b (G2)
     pairing_input.extend_from_slice(&convert_endianness_64(&proof_package.proof[0..64]));
@@ -41,9 +56,10 @@ fn verify_proof(proof_package: ProofPackageLite, verifying_key: VerifyingKey<Bn2
     pairing_input.extend_from_slice(&convert_endianness_128(&beta_g2_bytes));
 
     // Pair 3: public_inputs (G1) and gamma_g2 (G2)
-    let public_inputs = convert_vec_to_array(&proof_package.public_inputs).unwrap();
-    pairing_input.extend_from_slice(public_inputs[0].as_slice());
-    pairing_input.extend_from_slice(public_inputs[1].as_slice());
+    let public_inputs = convert_endianness_64(&proof_package.public_inputs);
+    pairing_input.extend_from_slice(&public_inputs);
+    // pairing_input.extend_from_slice(public_inputs[0].as_slice());
+    // pairing_input.extend_from_slice(public_inputs[1].as_slice());
 
     let mut gamma_g2_bytes = Vec::new();
     verifying_key.gamma_g2.serialize_uncompressed(&mut gamma_g2_bytes).expect("Failed to serialize gamma_g2");
@@ -218,6 +234,22 @@ impl<const NR_INPUTS: usize> Groth16Verifier<'_, NR_INPUTS> {
         })
     }
 
+    // pub fn prepare_inputs(
+    //     pvk: &PreparedVerifyingKey<E>,
+    //     public_inputs: &[E::ScalarField],
+    // ) -> R1CSResult<E::G1> {
+    //     if (public_inputs.len() + 1) != pvk.vk.gamma_abc_g1.len() {
+    //         return Err(SynthesisError::MalformedVerifyingKey);
+    //     }
+    //
+    //     let mut g_ic = pvk.vk.gamma_abc_g1[0].into_group();
+    //     for (i, b) in public_inputs.iter().zip(pvk.vk.gamma_abc_g1.iter().skip(1)) {
+    //         g_ic.add_assign(&b.mul_bigint(i.into_bigint()));
+    //     }
+    //
+    //     Ok(g_ic)
+    // }
+
     pub fn prepare_inputs<const CHECK: bool>(&mut self) -> Result<(), Groth16Error> {
         let mut prepared_public_inputs = self.verifyingkey.vk_ic[0];
 
@@ -228,7 +260,7 @@ impl<const NR_INPUTS: usize> Groth16Verifier<'_, NR_INPUTS> {
             let mul_res = alt_bn128_multiplication(
                 &[&self.verifyingkey.vk_ic[i + 1][..], &input[..]].concat(),
             )
-                .map_err(|_| Groth16Error::PreparingInputsG1MulFailed)?;
+                .map_err(|error|{ println!("{:?}", error);Groth16Error::PreparingInputsG1MulFailed})?;
             prepared_public_inputs =
                 alt_bn128_addition(&[&mul_res[..], &prepared_public_inputs[..]].concat())
                     .map_err(|_| Groth16Error::PreparingInputsG1AdditionFailed)?[..]
@@ -268,12 +300,23 @@ impl<const NR_INPUTS: usize> Groth16Verifier<'_, NR_INPUTS> {
         ]
             .concat();
 
-        let pairing_res = alt_bn128_pairing(pairing_input.as_slice())
-            .map_err(|_| Groth16Error::ProofVerificationFailed)?;
+        let converted_input: Vec<u8> = pairing_input
+            .chunks(ALT_BN128_PAIRING_ELEMENT_LEN)
+            .flat_map(|chunk| {
+                let mut converted = Vec::new();
+                converted.extend_from_slice(&convert_endianness_64(&chunk[..64]));
+                converted.extend_from_slice(&convert_endianness_128(&chunk[64..]));
+                converted
+            })
+            .collect();
 
+        let pairing_res = alt_bn128_pairing(pairing_input.as_slice())
+            .map_err(|_| PairingVerificationError)?;
+        println!("Pairing result: {:?}", pairing_res);
         if pairing_res[31] != 1 {
-            return Err(Groth16Error::ProofVerificationFailed);
+            return Ok(false)
         }
+
         Ok(true)
     }
 
@@ -301,7 +344,7 @@ impl<const NR_INPUTS: usize> Groth16Verifier<'_, NR_INPUTS> {
 }
 
 pub fn is_less_than_bn254_field_size_be(bytes: &[u8; 32]) -> bool {
-    let bigint = BigUint::from_bytes_be(bytes);
+    let bigint = BigUint::from_bytes_le(bytes);
     bigint < ark_bn254::Fr::MODULUS.into()
 }
 
@@ -413,6 +456,31 @@ fn extract_and_convert_proof(proof_package: &ProofPackageLite) -> Result<([u8; 6
     if proof_package.proof.len() < 64 {
         return Err("Proof is too short");
     }
+
+    // let proof = Proof::<Bn254>::deserialize_uncompressed_unchecked(&proof_package.proof[..]).unwrap();
+    // let mut proof_a_bytes = Vec::with_capacity(proof.a.serialized_size(Compress::No));
+    // let _ = proof.a.serialize_uncompressed(&mut proof_a_bytes);
+    //
+    // let proof_a: G1 = G1::deserialize_with_mode(
+    //         &*[&change_endianness(&proof_a_bytes[0..64]), &[0u8][..]].concat(),
+    //         Compress::No,
+    //     Validate::Yes,
+    // ).unwrap();
+    //
+    // let mut proof_a_neg = [0u8; 65];
+    //
+    // proof_a
+    //     .neg()
+    //     .x
+    //     .serialize_with_mode(&mut proof_a_neg[..32], Compress::No).unwrap();
+    //
+    // proof_a
+    //     .neg()
+    //     .y
+    //     .serialize_with_mode(&mut proof_a_neg[32..], Compress::No).unwrap();
+
+    // let proof_a = convert_endianness::<32, 64>(<&[u8; 64]>::try_from(&proof_a_neg[..64]).unwrap());
+
 
     // let proof = Proof::<Bn254>::deserialize_uncompressed_unchecked(&proof_package.proof[..]).expect("TODO: panic message");
     // let mut proof_a_neg_bytes = Vec::new();

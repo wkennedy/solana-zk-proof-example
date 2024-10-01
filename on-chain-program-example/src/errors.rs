@@ -6,6 +6,8 @@ pub enum Groth16Error {
     IncompatibleVerifyingKeyWithNrPublicInputs,
     #[error("ProofVerificationFailed")]
     ProofVerificationFailed,
+    #[error("PairingVerificationError")]
+    PairingVerificationError,
     #[error("PreparingInputsG1AdditionFailed")]
     PreparingInputsG1AdditionFailed,
     #[error("PreparingInputsG1MulFailed")]

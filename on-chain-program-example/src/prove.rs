@@ -1,20 +1,28 @@
 use crate::account_state::AccountState;
 use crate::account_state_circuit::AccountStateCircuit;
-use crate::byte_utils::bytes_to_field;
+use crate::byte_utils::{bytes_to_field, fr_to_g1, g1_affine_to_bytes};
 use ark_bn254::{Bn254, Fr, G1Projective};
 use ark_groth16::{prepare_verifying_key, Groth16, PreparedVerifyingKey, Proof, ProvingKey, VerifyingKey};
-use ark_serialize::{CanonicalSerialize, Compress};
+use ark_serialize::{CanonicalSerialize, CanonicalSerializeHashExt, Compress};
 use ark_snark::SNARK;
 use borsh::{BorshDeserialize, BorshSerialize};
 use rand::thread_rng;
 use std::fs::File;
 use std::io::Write;
+use std::ops::Neg;
 
 //TODO we know the size of the proof and vk, so change from vec
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct ProofPackageLite {
     pub proof: Vec<u8>,
     pub public_inputs: Vec<[u8; 32]>,
+    pub verifying_key: Vec<u8>
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct ProofPackagePrepared {
+    pub proof: Vec<u8>,
+    pub public_inputs: Vec<u8>,
     pub verifying_key: Vec<u8>
 }
 
@@ -44,7 +52,7 @@ pub fn setup(save_keys: bool) -> (ProvingKey<Bn254>, VerifyingKey<Bn254>){
     (proving_key, verifying_key)
 }
 
-pub fn generate_proof(proving_key: &ProvingKey<Bn254>, verifying_key: &VerifyingKey<Bn254>, accounts: Vec<AccountState>) -> (ProofPackageLite, ProofPackage) {
+pub fn generate_proof(proving_key: &ProvingKey<Bn254>, verifying_key: &VerifyingKey<Bn254>, accounts: Vec<AccountState>) -> (ProofPackageLite, ProofPackagePrepared, ProofPackage) {
     let rng = &mut thread_rng();
 
     let account_state_circuit = AccountStateCircuit::new(accounts);
@@ -56,6 +64,12 @@ pub fn generate_proof(proving_key: &ProvingKey<Bn254>, verifying_key: &Verifying
                                         rng,
     ).unwrap();
 
+    let proof_neg = Proof::<Bn254> {
+        a: proof.a.neg(),
+        b: proof.b,
+        c: proof.c,
+    };
+
     let mut proof_bytes = Vec::with_capacity(proof.serialized_size(Compress::No));
     proof.serialize_uncompressed(&mut proof_bytes).expect("Error serializing proof");
 
@@ -63,6 +77,12 @@ pub fn generate_proof(proving_key: &ProvingKey<Bn254>, verifying_key: &Verifying
         .iter()
         .map(|input| bytes_to_field(input))
         .collect::<Result<Vec<Fr>, _>>().expect("");
+
+    // let g1 = g1_affine_to_bytes(&fr_to_g1(&public_inputs_fr[0]));
+    // let g2 = g1_affine_to_bytes(&fr_to_g1(&public_inputs_fr[1]));
+    // let mut pi: Vec<[u8; 64]> = Vec::new();
+    // pi.push(<[u8; 64]>::try_from(&g1[0..64]).unwrap());
+    // pi.push(<[u8; 64]>::try_from(&g2[0..64]).unwrap());
 
     let prepared_verifying_key = prepare_verifying_key(&verifying_key);
 
@@ -76,10 +96,16 @@ pub fn generate_proof(proving_key: &ProvingKey<Bn254>, verifying_key: &Verifying
     let _ = prepared_verifying_key.serialize_uncompressed(&mut prepared_verifying_key_bytes);
 
     (ProofPackageLite {
+        proof: proof_bytes.clone(),
+        public_inputs: public_inputs.clone(),
+        verifying_key: prepared_verifying_key_bytes.clone(),
+    },
+     ProofPackagePrepared {
         proof: proof_bytes,
-        public_inputs: public_inputs,
-        verifying_key: verifying_key_bytes,
-    }, ProofPackage {
+        public_inputs: projective_bytes,
+        verifying_key: prepared_verifying_key_bytes,
+    },
+     ProofPackage {
         proof,
         public_inputs: g1_projective,
         prepared_verifying_key,

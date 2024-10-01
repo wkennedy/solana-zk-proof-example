@@ -79,8 +79,8 @@ async fn main() {
 
     let account = AccountState {
         address: Pubkey::new_unique(), // 1 SOL
-        lamports: 100,
-        data: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        lamports: 1,
+        data: vec![0],
         owner: payer.pubkey(),
         executable: false,
         rent_epoch: 0,
@@ -89,7 +89,7 @@ async fn main() {
     // Generate the proof
 
     let (proving_key, verifying_key) = setup(true);
-    let (proof_package_lite, proof_package) = generate_proof(&proving_key, &verifying_key, vec![account]);
+    let (proof_package_lite, proof_package_prepared, proof_package) = generate_proof(&proving_key, &verifying_key, vec![account]);
     let off_chain_verify = verify_proof_package(&proof_package);
     println!("off chain result: {:?}", off_chain_verify);
 
