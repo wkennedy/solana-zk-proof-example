@@ -36,13 +36,12 @@ fn verify_proof(
     mut groth16_verifier_prepared: Groth16VerifierPrepared,
 ) -> ProgramResult {
 
-    // let mut prepared_verifier = proof_package.groth16_verifier_prepared;
     let result = groth16_verifier_prepared
         .verify()
         .expect("Error deserializing verifier");
 
     if result {
-        msg!("Proof is valid! Account properties verified.");
+        msg!("Proof is valid! Inputs verified.");
         update_on_chain_state()?;
         Ok(())
     } else {

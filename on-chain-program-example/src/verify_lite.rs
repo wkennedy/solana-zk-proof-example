@@ -327,6 +327,54 @@ pub fn convert_arkworks_verifying_key_to_solana_verifying_key(
     })
 }
 
+
+pub fn convert_arkworks_verifying_key_to_solana_verifying_key_prepared(
+    ark_vk: &VerifyingKey<Bn254>,
+) -> Box<Groth16VerifyingKeyPrepared> {
+    // Convert alpha_g1
+    let mut vk_alpha_g1 = [0u8; 64];
+    ark_vk
+        .alpha_g1
+        .serialize_uncompressed(&mut vk_alpha_g1[..])
+        .unwrap();
+
+    // Convert beta_g2
+    let mut vk_beta_g2 = [0u8; 128];
+    ark_vk
+        .beta_g2
+        .serialize_uncompressed(&mut vk_beta_g2[..])
+        .unwrap();
+
+    // Convert gamma_g2
+    let mut vk_gamma_g2 = [0u8; 128];
+    ark_vk
+        .gamma_g2
+        .serialize_uncompressed(&mut vk_gamma_g2[..])
+        .unwrap();
+
+    // Convert delta_g2
+    let mut vk_delta_g2 = [0u8; 128];
+    ark_vk
+        .delta_g2
+        .serialize_uncompressed(&mut vk_delta_g2[..])
+        .unwrap();
+
+    let vk_alpha_g1_converted = convert_endianness::<32, 64>(&vk_alpha_g1);
+    let vk_beta_g2_converted = convert_endianness::<64, 128>(&vk_beta_g2);
+    let vk_gamma_g2_converted = convert_endianness::<64, 128>(&vk_gamma_g2);
+    let vk_delta_g2_converted = convert_endianness::<64, 128>(&vk_delta_g2);
+
+    info!("VK Alpha G1 (before conversion): {:?}", vk_alpha_g1);
+    info!("VK Alpha G1 (after conversion): {:?}", vk_alpha_g1);
+
+    Box::new(Groth16VerifyingKeyPrepared {
+        vk_alpha_g1: vk_alpha_g1_converted,
+        vk_beta_g2: vk_beta_g2_converted,
+        vk_gamma_g2: vk_gamma_g2_converted,
+        vk_delta_g2: vk_delta_g2_converted,
+    })
+}
+
 const NR_INPUTS: usize = 1; // Replace with your actual NR_INPUTS value
 pub fn convert_ark_public_input(vec: &Vec<[u8; 32]>) -> Result<[[u8; 32]; NR_INPUTS], String> {
     if vec.len() != NR_INPUTS {

@@ -8,7 +8,7 @@ mod test {
     use ark_bn254::{Bn254, Fr, G1Affine, G1Projective};
     use ark_ec::pairing::Pairing;
     use ark_ec::{AffineRepr, CurveGroup};
-    use ark_groth16::{prepare_verifying_key, Groth16, Proof};
+    use ark_groth16::{prepare_verifying_key, Groth16, Proof, VerifyingKey};
     use ark_serialize::{CanonicalSerialize, Compress};
     use ark_snark::SNARK;
     use ark_std::UniformRand;
@@ -27,7 +27,7 @@ mod test {
     use solana_zk_client_example::circuit::ExampleCircuit;
     use solana_zk_client_example::prove::{generate_proof_package, setup};
     use solana_zk_client_example::verify::verify_proof_package;
-    use solana_zk_client_example::verify_lite::{build_verifier, convert_ark_public_input, convert_arkworks_verifying_key_to_solana_verifying_key, prepare_inputs, Groth16VerifierPrepared, Groth16VerifyingKeyPrepared};
+    use solana_zk_client_example::verify_lite::{build_verifier, convert_ark_public_input, convert_arkworks_verifying_key_to_solana_verifying_key, convert_arkworks_verifying_key_to_solana_verifying_key_prepared, prepare_inputs, Groth16VerifierPrepared, Groth16VerifyingKeyPrepared};
     use std::ops::{Mul, Neg};
     use std::str::FromStr;
 
@@ -176,6 +176,7 @@ mod test {
             b: proof.b,
             c: proof.c,
         };
+        
         let mut proof_bytes = Vec::with_capacity(proof_with_neg_a.serialized_size(Compress::No));
         proof_with_neg_a
             .serialize_uncompressed(&mut proof_bytes)
@@ -202,14 +203,7 @@ mod test {
         let prepared_public_input =
             convert_endianness::<32, 64>(<&[u8; 64]>::try_from(g1_bytes.as_slice()).unwrap());
 
-        let groth_vk = convert_arkworks_verifying_key_to_solana_verifying_key(&vk);
-
-        let groth_vk_prepared = Groth16VerifyingKeyPrepared {
-            vk_alpha_g1: groth_vk.vk_alpha_g1,
-            vk_beta_g2: groth_vk.vk_beta_g2,
-            vk_gamma_g2: groth_vk.vk_gamma_g2,
-            vk_delta_g2: groth_vk.vk_delta_g2,
-        };
+        let groth_vk_prepared = convert_arkworks_verifying_key_to_solana_verifying_key_prepared(&vk);
 
         let public_inputs = convert_ark_public_input(&public_input).unwrap();
 
@@ -226,7 +220,7 @@ mod test {
             proof_b,
             proof_c,
             prepared_public_input,
-            Box::new(groth_vk_prepared),
+            groth_vk_prepared,
         )
         .unwrap();
 
