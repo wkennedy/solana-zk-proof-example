@@ -22,6 +22,26 @@ What are some of the challenges associated with verifying ZK proofs on-chain? He
 
 Let's get into it!
 
+### Running the example
+
+Start your local validator
+```shell
+solana-test-validator
+```
+
+```shell
+cd proof-verify
+cargo build-bpf
+solana program deploy ./target/deploy/solana_zk_example.so
+```
+
+Replace the program ID in main.rs 9PMYmoKdNk67c9Gumo8WWNFpGwmmHfZ4BvFR2rh1winq with your program ID.
+```shell
+cd on-chain-program-example
+cargo build
+cargo test
+```
+
 ## Let's Begin
 
 This tutorial will mostly use libraries from [Solana](https://github.com/anza-xyz/agave) and [Arkworks](https://github.com/arkworks-rs)
@@ -374,4 +394,5 @@ See the test "test_alt_bn128_pairing_custom" in main.rs for an example just usin
 ### Other sources to check out
 
 [Risc Zero - Solana] (https://github.com/risc0/risc0-solana/tree/main)
+
 [LightProtocol Groth16 Solana] (https://github.com/Lightprotocol/groth16-solana)
