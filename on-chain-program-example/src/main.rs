@@ -1,42 +1,9 @@
-use ark_ec::pairing::Pairing;
-use ark_serialize::CanonicalSerialize;
-use ark_snark::SNARK;
-use borsh::{BorshDeserialize, BorshSerialize};
-use sha2::Digest;
-use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{pubkey::Pubkey, signature::Signer};
-use solana_zk_client_example::verify_lite::Groth16VerifierPrepared;
-use std::ops::Neg;
-use std::str::FromStr;
 
 #[tokio::main]
 async fn main() {}
 
-#[derive(BorshSerialize, BorshDeserialize)]
-pub enum ProgramInstruction {
-    VerifyProof(Groth16VerifierPrepared),
-}
-
-async fn request_airdrop(
-    client: &RpcClient,
-    pubkey: &Pubkey,
-    amount: u64,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let signature = client.request_airdrop(pubkey, amount).await?;
-
-    // Wait for the transaction to be confirmed
-    loop {
-        let confirmation = client.confirm_transaction(&signature).await.unwrap();
-        if confirmation {
-            break;
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod test {
-    use crate::{request_airdrop, ProgramInstruction};
     use ark_bn254::g2::G2Affine;
     use ark_bn254::{Bn254, Fr, G1Affine, G1Projective};
     use ark_ec::pairing::Pairing;
@@ -45,10 +12,9 @@ mod test {
     use ark_serialize::{CanonicalSerialize, Compress};
     use ark_snark::SNARK;
     use ark_std::UniformRand;
-    use borsh::to_vec;
+    use borsh::{to_vec, BorshDeserialize, BorshSerialize};
     use log::{info, LevelFilter};
     use rand::thread_rng;
-    use sha2::{Digest, Sha256};
     use solana_client::nonblocking::rpc_client::RpcClient;
     use solana_program::alt_bn128::compression::prelude::convert_endianness;
     use solana_program::alt_bn128::prelude::{alt_bn128_pairing, ALT_BN128_PAIRING_ELEMENT_LEN};
@@ -67,6 +33,28 @@ mod test {
 
     fn init() {
         let _ = env_logger::builder().filter_level(LevelFilter::Info).is_test(true).try_init();
+    }
+
+    #[derive(BorshSerialize, BorshDeserialize)]
+    pub enum ProgramInstruction {
+        VerifyProof(Groth16VerifierPrepared),
+    }
+
+    async fn request_airdrop(
+        client: &RpcClient,
+        pubkey: &Pubkey,
+        amount: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let signature = client.request_airdrop(pubkey, amount).await?;
+
+        // Wait for the transaction to be confirmed
+        loop {
+            let confirmation = client.confirm_transaction(&signature).await.unwrap();
+            if confirmation {
+                break;
+            }
+        }
+        Ok(())
     }
     
     #[tokio::test]
@@ -339,7 +327,7 @@ mod test {
         info!("q2: {:?}", q2);
     }
 
-    fn serialize_g1(output: &mut Vec<u8>, point: &G1Affine) {
+    fn serialize_g1(_output: &mut Vec<u8>, point: &G1Affine) {
         let mut serialized = Vec::new();
         point.serialize_uncompressed(&mut serialized).unwrap();
 
@@ -349,7 +337,7 @@ mod test {
         // }
     }
 
-    fn serialize_g2(output: &mut Vec<u8>, point: &G2Affine) {
+    fn serialize_g2(_output: &mut Vec<u8>, point: &G2Affine) {
         let mut serialized = Vec::new();
         point.serialize_uncompressed(&mut serialized).unwrap();
 

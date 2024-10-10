@@ -1,5 +1,5 @@
 use ark_ff::PrimeField;
-use ark_serialize::{CanonicalSerialize, SerializationError};
+use ark_serialize::{SerializationError};
 
 // Helper function to convert a field element to bytes
 pub fn field_to_bytes<F: PrimeField>(field: F) -> [u8; 32] {
